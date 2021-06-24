@@ -14,6 +14,7 @@ typedef struct _Context
     pa_mainloop *loop;
     pa_mainloop_api *api;
     pa_context *context;
+    NotifyNotification* notification;
 } Context;
 
 static struct config
@@ -35,24 +36,27 @@ void pa_notify_context_init(Context *context)
     context->loop = NULL;
     context->api = NULL;
     context->context = NULL;
+    context->notification = notify_notification_new(NULL, NULL, NULL);
 }
 
 static void notify_message(
+    NotifyNotification *notification,
     const gchar* summary,
     const gchar* body, 
     NotifyUrgency urgency,
     gint timeout)
 {
-    NotifyNotification *notification = notify_notification_new(summary, body, NULL);
+    notify_notification_update(notification, summary, body, NULL);
     notify_notification_set_timeout(notification, timeout);
     notify_notification_set_urgency(notification, urgency);
     notify_notification_show(notification, NULL);
 }
 
-static void sink_info_callback(pa_context *context, const pa_sink_info *i, int eol, void *userdata)
+static void sink_info_callback(pa_context *c, const pa_sink_info *i, int eol, void *userdata)
 {
     static gchar body[255];
     float volume;
+    Context *context = (Context*) userdata;
 
     if (i)
     {
@@ -64,6 +68,7 @@ static void sink_info_callback(pa_context *context, const pa_sink_info *i, int e
             g_sprintf(body, "Volume %.0f%%", volume * 100.0f);
         }
         notify_message(
+            context->notification,
             i->description,
             body,
             NOTIFY_URGENCY_NORMAL,
@@ -178,7 +183,7 @@ gboolean pa_init(Context* c)
     }
     g_debug("pa_context_connect");
 
-    pa_context_set_state_callback(c->context, context_state_callback, NULL);
+    pa_context_set_state_callback(c->context, context_state_callback, c);
     g_debug("pa_context_set_state_callback");
 
     return TRUE;
