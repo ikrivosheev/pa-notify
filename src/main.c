@@ -1,19 +1,101 @@
 #include <locale.h>
+#include <signal.h>
 #include <glib.h>
 #include <glib/gprintf.h>
+#include <libnotify/notify.h>
 #include <pulse/pulseaudio.h>
 
 #define G_LOG_DOMAIN    ((gchar*) 0)
-#define APPLICATION_NAME "pa-notify"
+#define PROGRAM_NAME "pa-notify"
+#define DEFAULT_DEBUG FALSE
 
+typedef struct _Context
+{
+    pa_mainloop *loop;
+    pa_mainloop_api *api;
+    pa_context *context;
+} Context;
+
+static struct config
+{
+    gboolean debug;
+} config = {
+    DEFAULT_DEBUG,
+};
+
+static GOptionEntry option_entries[] =
+{
+    {"debug", 'd', 0, G_OPTION_ARG_NONE, &config.debug, "Enable/disable debug information", NULL},
+    {NULL}
+};
+
+
+void pa_notify_context_init(Context *context) 
+{
+    context->loop = NULL;
+    context->api = NULL;
+    context->context = NULL;
+}
+
+static void notify_message(
+    const gchar* summary,
+    const gchar* body, 
+    NotifyUrgency urgency,
+    gint timeout)
+{
+    NotifyNotification *notification = notify_notification_new(summary, body, NULL);
+    notify_notification_set_timeout(notification, timeout);
+    notify_notification_set_urgency(notification, urgency);
+    notify_notification_show(notification, NULL);
+}
+
+static void sink_info_callback(pa_context *context, const pa_sink_info *i, int eol, void *userdata)
+{
+    static gchar body[255];
+    float volume;
+
+    if (i)
+    {
+        if (i->mute) {
+            g_sprintf(body, "Volume muted");
+        }
+        else {
+            volume = (float)pa_cvolume_avg(&(i->volume)) / (float)PA_VOLUME_NORM;
+            g_sprintf(body, "Volume %.0f%%", volume * 100.0f);
+        }
+        notify_message(
+            i->description,
+            body,
+            NOTIFY_URGENCY_NORMAL,
+            NOTIFY_EXPIRES_DEFAULT
+        );
+    }
+}
 
 static void subscribe_callback(
     pa_context* context, 
-    pa_subscription_event_type_t t, 
+    pa_subscription_event_type_t type, 
     uint32_t idx, 
     void *userdata)
 {
-    printf("New event");
+    pa_operation *op = NULL;
+    unsigned facility = type & PA_SUBSCRIPTION_EVENT_FACILITY_MASK;
+
+    g_debug("New event");
+    switch (facility)
+    {
+        case PA_SUBSCRIPTION_EVENT_SINK:
+            op = pa_context_get_sink_info_by_index(context, idx, sink_info_callback, userdata);
+            break;
+        default:
+            g_debug("Unexpected event");
+            break;
+    }
+
+    if (op)
+    {
+        pa_operation_unref(op);
+    }
 }
 
 static void context_state_callback(pa_context *c, void *userdata)
@@ -26,7 +108,7 @@ static void context_state_callback(pa_context *c, void *userdata)
             break;
 
         case PA_CONTEXT_READY:
-            fprintf(stderr, "PulseAudio connection established.\n");
+            g_info("PulseAudio connection established.\n");
             // Subscribe to sink events from the server. This is how we get
             // volume change notifications from the server.
             pa_context_set_subscribe_callback(c, subscribe_callback, userdata);
@@ -34,39 +116,135 @@ static void context_state_callback(pa_context *c, void *userdata)
             break;
 
         case PA_CONTEXT_TERMINATED:
-            fprintf(stderr, "PulseAudio connection terminated.\n");
+            g_info("PulseAudio connection terminated.\n");
             break;
 
         case PA_CONTEXT_FAILED:
         default:
-            fprintf(stderr, "Connection failure: %s\n", pa_strerror(pa_context_errno(c)));
+            g_info("Connection failure: %s\n", pa_strerror(pa_context_errno(c)));
             break;
     }
 }
 
-int main(int argc, char* argv[]) 
+static void exit_signal_callback(pa_mainloop_api *api, pa_signal_event *e, int sig, void* userdata)
 {
-    pa_mainloop* loop = NULL;    
-    pa_mainloop_api* api = NULL;
-    pa_context* context = NULL;
-    int error, retval;
-
-    setlocale (LC_ALL, "");
-
-    loop = pa_mainloop_new();
-    api = pa_mainloop_get_api(loop);
-    context = pa_context_new(api, APPLICATION_NAME);
-    if ((error = pa_context_connect(context, NULL, 0, NULL)) != 0) 
+    if (api) 
     {
-        g_error("pa_context_connect returned NULL");
+        api->quit(api, 0);
+    }
+}
+
+gboolean pa_init(Context* c) 
+{
+    if (!(c->loop = pa_mainloop_new())) 
+    {
+        g_error("pa_mainloop_new failed");
+        return FALSE;
+    }
+    g_debug("pa_mainloop_new");
+
+    c->api = pa_mainloop_get_api(c->loop);
+    if (pa_signal_init(c->api) != 0)
+    {
+        g_error("pa_signal_init failed");
+        return FALSE;
+    }
+    g_debug("pa_mainloop_get_api");
+    
+    if (!pa_signal_new(SIGINT, exit_signal_callback, NULL))
+    {
+        g_error("pa_signal_new SIGINT failed");
+        return FALSE;
+    }
+    if (!pa_signal_new(SIGTERM, exit_signal_callback, NULL))
+    {
+        g_error("pa_signal_new SIGTERN failed");
+        return FALSE;
+    }
+    signal(SIGPIPE, SIG_IGN);
+    g_debug("pa_signal_new SIGINT SIGTERM");
+
+    if (!(c->context = pa_context_new(c->api, PROGRAM_NAME))) 
+    {
+        g_error("pa_context_new failed");
+        return FALSE;
+    }
+    g_debug("pa_context_new");
+
+    if (pa_context_connect(c->context, NULL, PA_CONTEXT_NOAUTOSPAWN, NULL) < 0) 
+    {
+        g_error("pa_context_connect ");
+        return FALSE;
+    }
+    g_debug("pa_context_connect");
+
+    pa_context_set_state_callback(c->context, context_state_callback, NULL);
+    g_debug("pa_context_set_state_callback");
+
+    return TRUE;
+}
+
+static gboolean options_init(int argc, char* argv[])
+{
+    GError *error = NULL;
+    GOptionContext *option_context;
+
+    option_context = g_option_context_new(NULL);
+    g_option_context_add_main_entries(option_context, option_entries, PROGRAM_NAME);
+
+    if (g_option_context_parse(option_context, &argc, &argv, &error) == FALSE) 
+    {
+        g_error("Cannot parse command line arguments: %s", error->message);
+        g_error_free(error);
         return FALSE;
     }
 
-    pa_context_set_state_callback(context, context_state_callback, NULL);
+    g_option_context_free(option_context);
+    if (config.debug == TRUE)
+        g_log_set_handler(NULL, G_LOG_LEVEL_DEBUG, g_log_default_handler, NULL);
+    else
+        g_log_set_handler(
+            NULL, 
+            G_LOG_LEVEL_INFO | G_LOG_LEVEL_WARNING | G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_ERROR, 
+            g_log_default_handler, 
+            NULL);
+
+    return TRUE;
+}
+
+int main(int argc, char* argv[]) 
+{
+    Context context;
+    int retval = 1;
+
+    setlocale (LC_ALL, "");
+
+    g_return_val_if_fail(options_init(argc, argv), 1);
+    g_info("Options have been initialized");
+
+    pa_notify_context_init(&context);
+    g_return_val_if_fail(notify_init(PROGRAM_NAME), 1);
+    g_info("Notify has been initialized");
+
+    g_return_val_if_fail(pa_init(&context), 1);
+    g_info("PulseAudio has been initialized");
 
     g_info("Run loop");
-    pa_mainloop_run(loop, &retval);
+    pa_mainloop_run(context.loop, &retval);
+    g_info("Stop loop");
 
-    pa_mainloop_free(loop);
-    return 0;
+    notify_uninit();
+    
+    if (context.context)
+    {
+        pa_context_unref(context.context);
+    }
+
+    if (context.loop)
+    {
+        pa_signal_done();
+        pa_mainloop_free(context.loop);
+    }
+
+    return retval;
 }
