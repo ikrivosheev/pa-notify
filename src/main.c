@@ -1,4 +1,5 @@
 #include <locale.h>
+#include <math.h>
 #include <signal.h>
 #include <glib.h>
 #include <glib/gprintf.h>
@@ -31,7 +32,7 @@ static GOptionEntry option_entries[] =
 };
 
 
-void pa_notify_context_init(Context *context) 
+void context_init(Context *context) 
 {
     context->loop = NULL;
     context->api = NULL;
@@ -39,16 +40,35 @@ void pa_notify_context_init(Context *context)
     context->notification = notify_notification_new(NULL, NULL, NULL);
 }
 
+void context_free(Context *context) 
+{
+    if (context-context)
+    {
+        pa_context_unref(context->context);
+    }
+
+    if (context->loop)
+    {
+        pa_signal_done();
+        pa_mainloop_free(context->loop);
+    }
+
+}
+
 static void notify_message(
     NotifyNotification *notification,
     const gchar* summary,
     const gchar* body, 
     NotifyUrgency urgency,
-    gint timeout)
+    gint timeout,
+    float volume)
 {
+    GVariant *g_volume = g_variant_new_int32(ceil(volume));
+
     notify_notification_update(notification, summary, body, NULL);
     notify_notification_set_timeout(notification, timeout);
     notify_notification_set_urgency(notification, urgency);
+    notify_notification_set_hint(notification, "value", g_volume);
     notify_notification_show(notification, NULL);
 }
 
@@ -65,14 +85,16 @@ static void sink_info_callback(pa_context *c, const pa_sink_info *i, int eol, vo
         }
         else {
             volume = (float)pa_cvolume_avg(&(i->volume)) / (float)PA_VOLUME_NORM;
-            g_sprintf(body, "Volume %.0f%%", volume * 100.0f);
+            volume *= 100.0f;
+            g_sprintf(body, "Volume %.0f%%", volume);
         }
         notify_message(
             context->notification,
             i->description,
             body,
             NOTIFY_URGENCY_NORMAL,
-            NOTIFY_EXPIRES_DEFAULT
+            NOTIFY_EXPIRES_DEFAULT,
+            volume
         );
     }
 }
@@ -227,7 +249,7 @@ int main(int argc, char* argv[])
     g_return_val_if_fail(options_init(argc, argv), 1);
     g_info("Options have been initialized");
 
-    pa_notify_context_init(&context);
+    context_init(&context);
     g_return_val_if_fail(notify_init(PROGRAM_NAME), 1);
     g_info("Notify has been initialized");
 
@@ -239,17 +261,7 @@ int main(int argc, char* argv[])
     g_info("Stop loop");
 
     notify_uninit();
+    context_free(&context);
     
-    if (context.context)
-    {
-        pa_context_unref(context.context);
-    }
-
-    if (context.loop)
-    {
-        pa_signal_done();
-        pa_mainloop_free(context.loop);
-    }
-
     return retval;
 }
