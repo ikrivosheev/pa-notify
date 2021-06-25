@@ -16,6 +16,7 @@ typedef struct _Context
     pa_mainloop_api *api;
     pa_context *context;
     NotifyNotification* notification;
+    gint last_volume;
 } Context;
 
 static struct config
@@ -38,6 +39,7 @@ void context_init(Context *context)
     context->api = NULL;
     context->context = NULL;
     context->notification = notify_notification_new(NULL, NULL, NULL);
+    context->last_volume = -1;
 }
 
 void context_free(Context *context) 
@@ -61,46 +63,61 @@ static void notify_message(
     const gchar* body, 
     NotifyUrgency urgency,
     gint timeout,
-    float volume)
+    gint volume)
 {
-    GVariant *g_volume = g_variant_new_int32(ceil(volume));
+    GVariant *g_volume = g_variant_new_int32(volume);
 
     notify_notification_update(notification, summary, body, NULL);
     notify_notification_set_timeout(notification, timeout);
     notify_notification_set_urgency(notification, urgency);
-    notify_notification_set_hint(notification, "value", g_volume);
+    if (volume >= 0)
+    {
+        notify_notification_set_hint(notification, "value", g_volume);
+    }
+
     notify_notification_show(notification, NULL);
 }
 
-static void sink_info_callback(pa_context *c, const pa_sink_info *i, int eol, void *userdata)
+static void sink_info_callback(
+    pa_context *c, 
+    const pa_sink_info *i,
+    int eol, 
+    void *userdata)
 {
     static gchar body[255];
     float volume;
+    gint i_volume;
     Context *context = (Context*) userdata;
 
     if (i)
     {
         if (i->mute) {
+            i_volume = -1;
             g_sprintf(body, "Volume muted");
         }
         else {
             volume = (float)pa_cvolume_avg(&(i->volume)) / (float)PA_VOLUME_NORM;
             volume *= 100.0f;
             g_sprintf(body, "Volume %.0f%%", volume);
+            i_volume = (int)ceil(volume);
         }
-        notify_message(
-            context->notification,
-            i->description,
-            body,
-            NOTIFY_URGENCY_NORMAL,
-            NOTIFY_EXPIRES_DEFAULT,
-            volume
-        );
+
+        if (context->last_volume != i_volume) {
+            notify_message(
+                context->notification,
+                i->description,
+                body,
+                NOTIFY_URGENCY_NORMAL,
+                NOTIFY_EXPIRES_DEFAULT,
+                i_volume
+            );
+            context->last_volume = i_volume;
+        }
     }
 }
 
 static void subscribe_callback(
-    pa_context* context, 
+    pa_context* c, 
     pa_subscription_event_type_t type, 
     uint32_t idx, 
     void *userdata)
@@ -112,7 +129,7 @@ static void subscribe_callback(
     switch (facility)
     {
         case PA_SUBSCRIPTION_EVENT_SINK:
-            op = pa_context_get_sink_info_by_index(context, idx, sink_info_callback, userdata);
+            op = pa_context_get_sink_info_by_index(c, idx, sink_info_callback, userdata);
             break;
         default:
             g_debug("Unexpected event");
@@ -178,12 +195,12 @@ gboolean pa_init(Context* c)
     }
     g_debug("pa_mainloop_get_api");
     
-    if (!pa_signal_new(SIGINT, exit_signal_callback, NULL))
+    if (!pa_signal_new(SIGINT, exit_signal_callback, c))
     {
         g_error("pa_signal_new SIGINT failed");
         return FALSE;
     }
-    if (!pa_signal_new(SIGTERM, exit_signal_callback, NULL))
+    if (!pa_signal_new(SIGTERM, exit_signal_callback, c))
     {
         g_error("pa_signal_new SIGTERN failed");
         return FALSE;
