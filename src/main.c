@@ -23,12 +23,22 @@ typedef struct _Context
 static struct config
 {
     gboolean debug;
+    gint timeout;
 } config = {
     DEFAULT_DEBUG,
+    NOTIFY_EXPIRES_DEFAULT,
 };
 
 static GOptionEntry option_entries[] = {
     { "debug", 'd', 0, G_OPTION_ARG_NONE, &config.debug, "Enable/disable debug information", NULL },
+    { "timeout",
+      't',
+      0,
+      G_OPTION_ARG_INT,
+      &config.timeout,
+      "Notification timeout in seconds (-1 - default notification timeout, 0 - notification never "
+      "expires)",
+      NULL },
     { NULL }
 };
 
@@ -85,6 +95,7 @@ sink_info_callback(pa_context* c, const pa_sink_info* i, int eol, void* userdata
     gint i_volume;
     Context* context = (Context*)userdata;
 
+    g_debug("Sink info");
     if (i) {
         if (i->mute) {
             i_volume = -1;
@@ -101,7 +112,7 @@ sink_info_callback(pa_context* c, const pa_sink_info* i, int eol, void* userdata
                            i->description,
                            body,
                            NOTIFY_URGENCY_NORMAL,
-                           NOTIFY_EXPIRES_DEFAULT,
+                           config.timeout,
                            i_volume);
             context->last_volume = i_volume;
         }
@@ -234,6 +245,10 @@ options_init(int argc, char* argv[])
                             G_LOG_LEVEL_ERROR,
                           g_log_default_handler,
                           NULL);
+
+    if (config.timeout > 0) {
+        config.timeout *= 1000;
+    }
 
     return TRUE;
 }
