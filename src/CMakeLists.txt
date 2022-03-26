@@ -17,7 +17,6 @@ target_link_libraries(pa-notify
     ${GLIB_LDFLAGS}
     ${PULSEAUDIO_LDFLAGS}
     ${LIBNOTIFY_LIBRARIES}
-    m
 )
 
 target_include_directories(
