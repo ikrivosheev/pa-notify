@@ -17,7 +17,8 @@ typedef struct _Context
     pa_mainloop_api* api;
     pa_context* context;
     NotifyNotification* notification;
-    gint last_volume;
+    gint volume;
+
 } Context;
 
 static struct config
@@ -49,13 +50,13 @@ context_init(Context* context)
     context->api = NULL;
     context->context = NULL;
     context->notification = notify_notification_new(NULL, NULL, NULL);
-    context->last_volume = -1;
+    context->volume = -2;
 }
 
 void
 context_free(Context* context)
 {
-    if (context - context) {
+    if (context != NULL) {
         pa_context_unref(context->context);
     }
 
@@ -68,13 +69,11 @@ context_free(Context* context)
 static void
 notify_message(NotifyNotification* notification,
                const gchar* summary,
-               const gchar* body,
                NotifyUrgency urgency,
                gint timeout,
                gint volume)
 {
-
-    notify_notification_update(notification, summary, body, NULL);
+    notify_notification_update(notification, summary, NULL, NULL);
     notify_notification_set_timeout(notification, timeout);
     notify_notification_set_urgency(notification, urgency);
     if (volume >= 0) {
@@ -90,31 +89,26 @@ notify_message(NotifyNotification* notification,
 static void
 sink_info_callback(pa_context* c, const pa_sink_info* i, int eol, void* userdata)
 {
-    static gchar body[255];
-    float volume;
-    gint i_volume;
+    static gchar summery[255];
+    float f_volume;
+    gint volume;
     Context* context = (Context*)userdata;
 
     g_debug("Sink info");
     if (i) {
         if (i->mute) {
-            i_volume = -1;
-            g_sprintf(body, "Volume muted");
+            volume = -1;
+            g_sprintf(summery, "Volume muted");
         } else {
-            volume = (float)pa_cvolume_avg(&(i->volume)) / (float)PA_VOLUME_NORM;
-            volume *= 100.0f;
-            g_sprintf(body, "Volume %.0f%%", volume);
-            i_volume = (int)ceil(volume);
+            f_volume = (float)pa_cvolume_avg(&(i->volume)) / (float)PA_VOLUME_NORM;
+            f_volume *= 100.0f;
+            g_sprintf(summery, "Volume");
+            volume = (int)ceil(f_volume);
         }
 
-        if (context->last_volume != i_volume) {
-            notify_message(context->notification,
-                           i->description,
-                           body,
-                           NOTIFY_URGENCY_NORMAL,
-                           config.timeout,
-                           i_volume);
-            context->last_volume = i_volume;
+        if (context->volume != volume) {
+            notify_message(
+              context->notification, summery, NOTIFY_URGENCY_LOW, config.timeout, volume);
         }
     }
 }
