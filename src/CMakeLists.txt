@@ -14,6 +14,7 @@ pkg_search_module(GDKPIXBUF REQUIRED gdk-pixbuf-2.0)
 
 
 target_link_libraries(pa-notify 
+    m
     ${GLIB_LDFLAGS}
     ${PULSEAUDIO_LDFLAGS}
     ${LIBNOTIFY_LIBRARIES}
