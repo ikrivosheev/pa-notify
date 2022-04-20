@@ -109,6 +109,7 @@ sink_info_callback(pa_context* c, const pa_sink_info* i, int eol, void* userdata
         if (context->volume != volume) {
             notify_message(
               context->notification, summery, NOTIFY_URGENCY_LOW, config.timeout, volume);
+            context->volume = volume;
         }
     }
 }
