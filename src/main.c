@@ -66,14 +66,29 @@ context_free(Context* context)
     }
 }
 
+static gchar*
+get_notify_icon(gint volume)
+{
+    if (volume < 0) {
+        return "audio-volume-muted";
+    } else if (volume >= 66) {
+        return "audio-volume-hight";
+    } else if (volume >= 33) {
+        return "audio-volume-medium";
+    } else {
+        return "audio-volume-low";
+    }
+}
+
 static void
 notify_message(NotifyNotification* notification,
                const gchar* summary,
                NotifyUrgency urgency,
+               const gchar* icon,
                gint timeout,
                gint volume)
 {
-    notify_notification_update(notification, summary, NULL, NULL);
+    notify_notification_update(notification, summary, NULL, icon);
     notify_notification_set_timeout(notification, timeout);
     notify_notification_set_urgency(notification, urgency);
     if (volume >= 0) {
@@ -107,8 +122,12 @@ sink_info_callback(pa_context* c, const pa_sink_info* i, int eol, void* userdata
         }
 
         if (context->volume != volume) {
-            notify_message(
-              context->notification, summery, NOTIFY_URGENCY_LOW, config.timeout, volume);
+            notify_message(context->notification,
+                           summery,
+                           NOTIFY_URGENCY_LOW,
+                           get_notify_icon(volume),
+                           config.timeout,
+                           volume);
             context->volume = volume;
         }
     }
@@ -219,6 +238,7 @@ pa_init(Context* c)
 static gboolean
 options_init(int argc, char* argv[])
 {
+
     GError* error = NULL;
     GOptionContext* option_context;
 
