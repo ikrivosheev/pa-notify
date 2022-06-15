@@ -67,7 +67,7 @@ context_free(Context* context)
 }
 
 static gchar*
-get_notify_icon(gint volume)
+notify_icon(gint volume)
 {
     if (volume < 0) {
         return "audio-volume-muted";
@@ -125,7 +125,7 @@ sink_info_callback(pa_context* c, const pa_sink_info* i, int eol, void* userdata
             notify_message(context->notification,
                            summery,
                            NOTIFY_URGENCY_LOW,
-                           get_notify_icon(volume),
+                           notify_icon(volume),
                            config.timeout,
                            volume);
             context->volume = volume;
