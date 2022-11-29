@@ -7,7 +7,6 @@
 #include <pulse/pulseaudio.h>
 #include <signal.h>
 
-#define G_LOG_DOMAIN ((gchar*)0)
 #define PROGRAM_NAME "pa-notify"
 #define DEFAULT_DEBUG FALSE
 
@@ -194,37 +193,37 @@ gboolean
 pa_init(Context* c)
 {
     if (!(c->loop = pa_mainloop_new())) {
-        g_error("pa_mainloop_new failed");
+        g_warning("pa_mainloop_new failed");
         return FALSE;
     }
     g_debug("pa_mainloop_new");
 
     c->api = pa_mainloop_get_api(c->loop);
     if (pa_signal_init(c->api) != 0) {
-        g_error("pa_signal_init failed");
+        g_warning("pa_signal_init failed");
         return FALSE;
     }
     g_debug("pa_mainloop_get_api");
 
     if (!pa_signal_new(SIGINT, exit_signal_callback, c)) {
-        g_error("pa_signal_new SIGINT failed");
+        g_warning("pa_signal_new SIGINT failed");
         return FALSE;
     }
     if (!pa_signal_new(SIGTERM, exit_signal_callback, c)) {
-        g_error("pa_signal_new SIGTERN failed");
+        g_warning("pa_signal_new SIGTERN failed");
         return FALSE;
     }
     signal(SIGPIPE, SIG_IGN);
     g_debug("pa_signal_new SIGINT SIGTERM");
 
     if (!(c->context = pa_context_new(c->api, PROGRAM_NAME))) {
-        g_error("pa_context_new failed");
+        g_warning("pa_context_new failed");
         return FALSE;
     }
     g_debug("pa_context_new");
 
     if (pa_context_connect(c->context, NULL, PA_CONTEXT_NOAUTOSPAWN, NULL) < 0) {
-        g_error("pa_context_connect ");
+        g_warning("pa_context_connect ");
         return FALSE;
     }
     g_debug("pa_context_connect");
@@ -246,7 +245,7 @@ options_init(int argc, char* argv[])
     g_option_context_add_main_entries(option_context, option_entries, PROGRAM_NAME);
 
     if (g_option_context_parse(option_context, &argc, &argv, &error) == FALSE) {
-        g_error("Cannot parse command line arguments: %s", error->message);
+        g_warning("Cannot parse command line arguments: %s", error->message);
         g_error_free(error);
         return FALSE;
     }
