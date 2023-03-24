@@ -65,6 +65,14 @@ context_free(Context* context)
     }
 }
 
+void
+context_exit(Context* context, int retval)
+{
+    if (context->api) {
+        context->api->quit(context->api, retval);
+    }
+}
+
 static gchar*
 notify_icon(gint volume)
 {
@@ -171,12 +179,14 @@ context_state_callback(pa_context* c, void* userdata)
             break;
 
         case PA_CONTEXT_TERMINATED:
-            g_info("PulseAudio connection terminated.\n");
+            g_warning("PulseAudio connection terminated.\n");
+            context_exit(userdata, 0);
             break;
 
         case PA_CONTEXT_FAILED:
         default:
-            g_info("Connection failure: %s\n", pa_strerror(pa_context_errno(c)));
+            g_warning("Connection failure: %s\n", pa_strerror(pa_context_errno(c)));
+            context_exit(userdata, 1);
             break;
     }
 }
