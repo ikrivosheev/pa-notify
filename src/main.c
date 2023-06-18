@@ -124,8 +124,8 @@ sink_info_callback(pa_context* c, const pa_sink_info* i, int eol, void* userdata
         } else {
             f_volume = (float)pa_cvolume_avg(&(i->volume)) / (float)PA_VOLUME_NORM;
             f_volume *= 100.0f;
-            g_sprintf(summery, "Volume");
             volume = (int)ceil(f_volume);
+            g_sprintf(summery, "Volume (%d%%)", volume);
         }
 
         if (context->volume != volume) {
