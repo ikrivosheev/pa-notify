@@ -9,6 +9,7 @@
 
 #define PROGRAM_NAME "pa-notify"
 #define DEFAULT_DEBUG FALSE
+#define URGENCY_DEFAULT NOTIFY_URGENCY_LOW
 
 typedef struct _Context
 {
@@ -24,9 +25,11 @@ static struct config
 {
     gboolean debug;
     gint timeout;
+    NotifyUrgency urgency;
 } config = {
     DEFAULT_DEBUG,
     NOTIFY_EXPIRES_DEFAULT,
+    URGENCY_DEFAULT,
 };
 
 static GOptionEntry option_entries[] = {
@@ -38,6 +41,13 @@ static GOptionEntry option_entries[] = {
       &config.timeout,
       "Notification timeout in seconds (-1 - default notification timeout, 0 - notification never "
       "expires)",
+      NULL },
+    { "urgency",
+      'u',
+      0,
+      G_OPTION_ARG_INT,
+      &config.urgency,
+      "Notification urgency (0 - low, 1 - normal, 2 - critical)",
       NULL },
     { NULL }
 };
@@ -77,13 +87,13 @@ static gchar*
 notify_icon(gint volume)
 {
     if (volume < 0) {
-        return "audio-volume-muted";
+        return "audio-volume-muted-symbolic";
     } else if (volume >= 66) {
-        return "audio-volume-high";
+        return "audio-volume-high-symbolic";
     } else if (volume >= 33) {
-        return "audio-volume-medium";
+        return "audio-volume-medium-symbolic";
     } else {
-        return "audio-volume-low";
+        return "audio-volume-low-symbolic";
     }
 }
 
@@ -131,7 +141,7 @@ sink_info_callback(pa_context* c, const pa_sink_info* i, int eol, void* userdata
         if (context->volume != volume) {
             notify_message(context->notification,
                            summery,
-                           NOTIFY_URGENCY_LOW,
+                           config.urgency,
                            notify_icon(volume),
                            config.timeout,
                            volume);
@@ -272,6 +282,14 @@ options_init(int argc, char* argv[])
 
     if (config.timeout > 0) {
         config.timeout *= 1000;
+    }
+
+    if (config.urgency > NOTIFY_URGENCY_CRITICAL || config.urgency < NOTIFY_URGENCY_LOW)
+    {
+        g_warning("Invalid value '%d' for 'urgency' option. Valid values are: 0 (low), 1 (normal), 2 (critical)",
+                config.urgency);
+        g_error_free(error);
+        return FALSE;
     }
 
     return TRUE;
