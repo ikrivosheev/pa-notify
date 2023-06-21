@@ -19,6 +19,7 @@ pa-notify [OPTION…]
 #### Application Options:
 * `-d`, `--debug` - Enable/disable debug information
 * `-t`, `--timeout` - Notification timeout in seconds (-1 - default notification timeout, 0 - notification never expires)
+* `-u`, `--urgency` - Notification urgency (0 - low, 1 - normal, 2 - critical)
 
 ### Examples
 
