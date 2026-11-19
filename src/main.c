@@ -5,21 +5,30 @@
 #include <locale.h>
 #include <math.h>
 #include <pulse/pulseaudio.h>
+#include <pulse/timeval.h>
 #include <signal.h>
 
 #define PROGRAM_NAME "pa-notify"
 #define DEFAULT_DEBUG FALSE
 #define URGENCY_DEFAULT NOTIFY_URGENCY_LOW
+#define RECONNECT_MAX_ATTEMPT 3u
 
 typedef struct _Context
 {
     pa_mainloop* loop;
     pa_mainloop_api* api;
     pa_context* context;
+    pa_time_event* reconnect_event;
     NotifyNotification* notification;
     gint volume;
+    guint reconnect_attempts;
 
 } Context;
+
+static gboolean
+pa_connect(Context* c);
+static void
+schedule_reconnect(Context* context, const gchar* reason);
 
 static struct config
 {
@@ -58,28 +67,28 @@ context_init(Context* context)
     context->loop = NULL;
     context->api = NULL;
     context->context = NULL;
+    context->reconnect_event = NULL;
     context->notification = notify_notification_new(NULL, NULL, NULL);
     context->volume = -2;
+    context->reconnect_attempts = 0;
 }
 
 void
 context_free(Context* context)
 {
-    if (context != NULL) {
+    if (context->context) {
         pa_context_unref(context->context);
+        context->context = NULL;
+    }
+
+    if (context->reconnect_event && context->api) {
+        context->api->time_free(context->reconnect_event);
+        context->reconnect_event = NULL;
     }
 
     if (context->loop) {
         pa_signal_done();
         pa_mainloop_free(context->loop);
-    }
-}
-
-void
-context_exit(Context* context, int retval)
-{
-    if (context->api) {
-        context->api->quit(context->api, retval);
     }
 }
 
@@ -172,6 +181,48 @@ subscribe_callback(pa_context* c, pa_subscription_event_type_t type, uint32_t id
 }
 
 static void
+reconnect_callback(pa_mainloop_api* api,
+                   pa_time_event* event,
+                   const struct timeval* tv,
+                   void* userdata)
+{
+    Context* context = (Context*)userdata;
+
+    api->time_free(event);
+    context->reconnect_event = NULL;
+
+    if (!pa_connect(context)) {
+        schedule_reconnect(context, "cannot create PulseAudio context");
+    }
+}
+
+static void
+schedule_reconnect(Context* context, const gchar* reason)
+{
+    struct timeval tv;
+    guint delay_sec;
+
+    if (context->reconnect_event) {
+        return;
+    }
+
+    if (context->context) {
+        pa_context_unref(context->context);
+        context->context = NULL;
+    }
+
+    delay_sec = 1u << MIN(context->reconnect_attempts, RECONNECT_MAX_ATTEMPT);
+    context->reconnect_attempts++;
+
+    pa_gettimeofday(&tv);
+    pa_timeval_add(&tv, (pa_usec_t)delay_sec * PA_USEC_PER_SEC);
+
+    g_warning("Connection lost: %s. Trying to reconnect in %u second(s)...", reason, delay_sec);
+    context->reconnect_event =
+      context->api->time_new(context->api, &tv, reconnect_callback, context);
+}
+
+static void
 context_state_callback(pa_context* c, void* userdata)
 {
     switch (pa_context_get_state(c)) {
@@ -182,6 +233,7 @@ context_state_callback(pa_context* c, void* userdata)
 
         case PA_CONTEXT_READY:
             g_info("PulseAudio connection established.\n");
+            ((Context*)userdata)->reconnect_attempts = 0;
             // Subscribe to sink events from the server. This is how we get
             // volume change notifications from the server.
             pa_context_set_subscribe_callback(c, subscribe_callback, userdata);
@@ -190,13 +242,13 @@ context_state_callback(pa_context* c, void* userdata)
 
         case PA_CONTEXT_TERMINATED:
             g_warning("PulseAudio connection terminated.\n");
-            context_exit(userdata, 0);
+            schedule_reconnect(userdata, "connection terminated");
             break;
 
         case PA_CONTEXT_FAILED:
         default:
             g_warning("Connection failure: %s\n", pa_strerror(pa_context_errno(c)));
-            context_exit(userdata, 1);
+            schedule_reconnect(userdata, pa_strerror(pa_context_errno(c)));
             break;
     }
 }
@@ -207,6 +259,28 @@ exit_signal_callback(pa_mainloop_api* api, pa_signal_event* e, int sig, void* us
     if (api) {
         api->quit(api, 0);
     }
+}
+
+static gboolean
+pa_connect(Context* c)
+{
+    if (!(c->context = pa_context_new(c->api, PROGRAM_NAME))) {
+        g_warning("pa_context_new failed");
+        return FALSE;
+    }
+
+    if (pa_context_connect(c->context, NULL, PA_CONTEXT_NOAUTOSPAWN, NULL) < 0) {
+        g_warning("pa_context_connect failed: %s", pa_strerror(pa_context_errno(c->context)));
+        pa_context_unref(c->context);
+        c->context = NULL;
+        return FALSE;
+    }
+    g_debug("pa_context_connect");
+
+    pa_context_set_state_callback(c->context, context_state_callback, c);
+    g_debug("pa_context_set_state_callback");
+
+    return TRUE;
 }
 
 gboolean
@@ -236,20 +310,9 @@ pa_init(Context* c)
     signal(SIGPIPE, SIG_IGN);
     g_debug("pa_signal_new SIGINT SIGTERM");
 
-    if (!(c->context = pa_context_new(c->api, PROGRAM_NAME))) {
-        g_warning("pa_context_new failed");
-        return FALSE;
+    if (!pa_connect(c)) {
+        schedule_reconnect(c, "initial connection failed");
     }
-    g_debug("pa_context_new");
-
-    if (pa_context_connect(c->context, NULL, PA_CONTEXT_NOAUTOSPAWN, NULL) < 0) {
-        g_warning("pa_context_connect ");
-        return FALSE;
-    }
-    g_debug("pa_context_connect");
-
-    pa_context_set_state_callback(c->context, context_state_callback, c);
-    g_debug("pa_context_set_state_callback");
 
     return TRUE;
 }
@@ -284,11 +347,10 @@ options_init(int argc, char* argv[])
         config.timeout *= 1000;
     }
 
-    if (config.urgency > NOTIFY_URGENCY_CRITICAL || config.urgency < NOTIFY_URGENCY_LOW)
-    {
-        g_warning("Invalid value '%d' for 'urgency' option. Valid values are: 0 (low), 1 (normal), 2 (critical)",
-                config.urgency);
-        g_error_free(error);
+    if (config.urgency > NOTIFY_URGENCY_CRITICAL || config.urgency < NOTIFY_URGENCY_LOW) {
+        g_warning("Invalid value '%d' for 'urgency' option. Valid values are: 0 (low), 1 (normal), "
+                  "2 (critical)",
+                  config.urgency);
         return FALSE;
     }
 
