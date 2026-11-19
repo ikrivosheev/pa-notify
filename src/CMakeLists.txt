@@ -7,24 +7,16 @@ set_target_properties(pa-notify PROPERTIES
 )
 
 find_package(PkgConfig REQUIRED)
-pkg_search_module(GLIB REQUIRED glib-2.0)
-pkg_search_module(PULSEAUDIO REQUIRED libpulse)
-pkg_search_module(LIBNOTIFY REQUIRED libnotify)
-pkg_search_module(GDKPIXBUF REQUIRED gdk-pixbuf-2.0)
+pkg_search_module(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
+pkg_search_module(PULSEAUDIO REQUIRED IMPORTED_TARGET libpulse)
+pkg_search_module(LIBNOTIFY REQUIRED IMPORTED_TARGET libnotify)
 
+target_compile_options(pa-notify PRIVATE -Wall -Wextra)
 
-target_link_libraries(pa-notify 
+target_link_libraries(pa-notify
+    PRIVATE
     m
-    ${GLIB_LDFLAGS}
-    ${PULSEAUDIO_LDFLAGS}
-    ${LIBNOTIFY_LIBRARIES}
-)
-
-target_include_directories(
-    pa-notify
-    PUBLIC 
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${GLIB_INCLUDE_DIRS}
-    ${PULSEAUDIO_INCLUDE_DIRS}
-    ${LIBNOTIFY_INCLUDE_DIRS}
+    PkgConfig::GLIB
+    PkgConfig::PULSEAUDIO
+    PkgConfig::LIBNOTIFY
 )

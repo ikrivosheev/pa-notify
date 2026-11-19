@@ -86,6 +86,11 @@ context_free(Context* context)
         context->reconnect_event = NULL;
     }
 
+    if (context->notification) {
+        g_object_unref(context->notification);
+        context->notification = NULL;
+    }
+
     if (context->loop) {
         pa_signal_done();
         pa_mainloop_free(context->loop);
@@ -128,7 +133,10 @@ notify_message(NotifyNotification* notification,
 }
 
 static void
-sink_info_callback(pa_context* c, const pa_sink_info* i, int eol, void* userdata)
+sink_info_callback(pa_context* c G_GNUC_UNUSED,
+                   const pa_sink_info* i,
+                   int eol G_GNUC_UNUSED,
+                   void* userdata)
 {
     static gchar summery[255];
     float f_volume;
@@ -183,7 +191,7 @@ subscribe_callback(pa_context* c, pa_subscription_event_type_t type, uint32_t id
 static void
 reconnect_callback(pa_mainloop_api* api,
                    pa_time_event* event,
-                   const struct timeval* tv,
+                   const struct timeval* tv G_GNUC_UNUSED,
                    void* userdata)
 {
     Context* context = (Context*)userdata;
@@ -202,13 +210,13 @@ schedule_reconnect(Context* context, const gchar* reason)
     struct timeval tv;
     guint delay_sec;
 
-    if (context->reconnect_event) {
-        return;
-    }
-
     if (context->context) {
         pa_context_unref(context->context);
         context->context = NULL;
+    }
+
+    if (context->reconnect_event) {
+        return;
     }
 
     delay_sec = 1u << MIN(context->reconnect_attempts, RECONNECT_MAX_ATTEMPT);
@@ -237,7 +245,11 @@ context_state_callback(pa_context* c, void* userdata)
             // Subscribe to sink events from the server. This is how we get
             // volume change notifications from the server.
             pa_context_set_subscribe_callback(c, subscribe_callback, userdata);
-            pa_context_subscribe(c, PA_SUBSCRIPTION_MASK_SINK, NULL, NULL);
+            pa_operation* subscribe_op =
+              pa_context_subscribe(c, PA_SUBSCRIPTION_MASK_SINK, NULL, NULL);
+            if (subscribe_op) {
+                pa_operation_unref(subscribe_op);
+            }
             break;
 
         case PA_CONTEXT_TERMINATED:
@@ -254,7 +266,10 @@ context_state_callback(pa_context* c, void* userdata)
 }
 
 static void
-exit_signal_callback(pa_mainloop_api* api, pa_signal_event* e, int sig, void* userdata)
+exit_signal_callback(pa_mainloop_api* api,
+                     pa_signal_event* e G_GNUC_UNUSED,
+                     int sig G_GNUC_UNUSED,
+                     void* userdata G_GNUC_UNUSED)
 {
     if (api) {
         api->quit(api, 0);
@@ -330,6 +345,7 @@ options_init(int argc, char* argv[])
     if (g_option_context_parse(option_context, &argc, &argv, &error) == FALSE) {
         g_warning("Cannot parse command line arguments: %s", error->message);
         g_error_free(error);
+        g_option_context_free(option_context);
         return FALSE;
     }
 
@@ -369,10 +385,19 @@ main(int argc, char* argv[])
     g_info("Options have been initialized");
 
     context_init(&context);
-    g_return_val_if_fail(notify_init(PROGRAM_NAME), 1);
+    if (!notify_init(PROGRAM_NAME)) {
+        g_warning("Cannot initialize libnotify");
+        context_free(&context);
+        return 1;
+    }
     g_info("Notify has been initialized");
 
-    g_return_val_if_fail(pa_init(&context), 1);
+    if (!pa_init(&context)) {
+        g_warning("Cannot initialize PulseAudio");
+        notify_uninit();
+        context_free(&context);
+        return 1;
+    }
     g_info("PulseAudio has been initialized");
 
     g_info("Run loop");

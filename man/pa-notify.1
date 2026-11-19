@@ -1,4 +1,4 @@
-.TH "pa-notify" "1" "25 July 2021" "pa-notify(1)" "User manual"
+.TH "pa-notify" "1" "19 November 2026" "pa-notify(1)" "User manual"
 
 .SH NAME
 
@@ -12,7 +12,7 @@ pa-notify \(em PulseAudio or PipeWire volume notification
 .SH DESCRIPTION
 
 .PP
-\fBpa-notify\fR is PulseAudio or PipeWire volume notification. It get information from PulseAudio using libpulse and send notification using libnotify. 
+\fBpa-notify\fR is a PulseAudio or PipeWire volume notification utility. It gets information from the sound server using libpulse and shows notifications using libnotify. If the connection to the sound server is lost (for example, when the PipeWire or PulseAudio daemon is restarted), \fBpa-notify\fR automatically reconnects.
 
 .SH OPTIONS
 
@@ -24,11 +24,12 @@ Enable debug information
 Notification timeout in seconds (-1 - default notification timeout, 0 - notification never expires)
 .IP "\fB-u\fR, \fB--urgency\fR" 5
 Notification urgency (0 - low, 1 - normal, 2 - critical)
+
 .SH EXAMPLES
 
-.EX
-
 .TP
-pa-notify
-.EE
-
+\fBpa-notify\fR
+Run with default settings.
+.TP
+\fBpa-notify \-t 2 \-u 1\fR
+Show each notification for two seconds with normal urgency.
