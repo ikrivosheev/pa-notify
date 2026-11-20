@@ -112,12 +112,12 @@ notify_icon(gint volume)
 }
 
 static void
-notify_message(NotifyNotification* notification,
-               const gchar* summary,
-               NotifyUrgency urgency,
-               const gchar* icon,
-               gint timeout,
-               gint volume)
+notification_apply(NotifyNotification* notification,
+                   const gchar* summary,
+                   NotifyUrgency urgency,
+                   const gchar* icon,
+                   gint timeout,
+                   gint volume)
 {
     notify_notification_update(notification, summary, NULL, icon);
     notify_notification_set_timeout(notification, timeout);
@@ -128,8 +128,42 @@ notify_message(NotifyNotification* notification,
     } else {
         notify_notification_set_hint(notification, "value", NULL);
     }
+}
 
-    notify_notification_show(notification, NULL);
+static gboolean
+notify_message(Context* context,
+               const gchar* summary,
+               NotifyUrgency urgency,
+               const gchar* icon,
+               gint timeout,
+               gint volume)
+{
+    GError* error = NULL;
+
+    notification_apply(context->notification, summary, urgency, icon, timeout, volume);
+    if (notify_notification_show(context->notification, &error)) {
+        return TRUE;
+    }
+
+    // The notification daemon may have been restarted, which invalidates the
+    // id stored in the reused notification object. Recreate it (fresh id) and
+    // retry once.
+    g_warning("Failed to show notification: %s. Recreating notification and retrying.",
+              error->message);
+    g_error_free(error);
+
+    g_object_unref(context->notification);
+    context->notification = notify_notification_new(NULL, NULL, NULL);
+    notification_apply(context->notification, summary, urgency, icon, timeout, volume);
+
+    error = NULL;
+    if (notify_notification_show(context->notification, &error)) {
+        return TRUE;
+    }
+
+    g_warning("Failed to show notification: %s", error->message);
+    g_error_free(error);
+    return FALSE;
 }
 
 static void
@@ -156,13 +190,10 @@ sink_info_callback(pa_context* c G_GNUC_UNUSED,
         }
 
         if (context->volume != volume) {
-            notify_message(context->notification,
-                           summery,
-                           config.urgency,
-                           notify_icon(volume),
-                           config.timeout,
-                           volume);
-            context->volume = volume;
+            if (notify_message(
+                  context, summery, config.urgency, notify_icon(volume), config.timeout, volume)) {
+                context->volume = volume;
+            }
         }
     }
 }

@@ -12,7 +12,7 @@ pa-notify \(em PulseAudio or PipeWire volume notification
 .SH DESCRIPTION
 
 .PP
-\fBpa-notify\fR is a PulseAudio or PipeWire volume notification utility. It gets information from the sound server using libpulse and shows notifications using libnotify. If the connection to the sound server is lost (for example, when the PipeWire or PulseAudio daemon is restarted), \fBpa-notify\fR automatically reconnects.
+\fBpa-notify\fR is a PulseAudio or PipeWire volume notification utility. It gets information from the sound server using libpulse and shows notifications using libnotify. If the connection to the sound server is lost (for example, when the PipeWire or PulseAudio daemon is restarted), \fBpa-notify\fR automatically reconnects. If showing a notification fails (for example, right after the notification daemon has been restarted), the notification is retried on the next volume change.
 
 .SH OPTIONS
 
