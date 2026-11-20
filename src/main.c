@@ -4,6 +4,7 @@
 #include <libnotify/notify.h>
 #include <locale.h>
 #include <math.h>
+#include <pulse/glib-mainloop.h>
 #include <pulse/pulseaudio.h>
 #include <pulse/timeval.h>
 #include <signal.h>
@@ -15,7 +16,8 @@
 
 typedef struct _Context
 {
-    pa_mainloop* loop;
+    GMainLoop* gloop;
+    pa_glib_mainloop* pa_loop;
     pa_mainloop_api* api;
     pa_context* context;
     pa_time_event* reconnect_event;
@@ -64,7 +66,8 @@ static GOptionEntry option_entries[] = {
 void
 context_init(Context* context)
 {
-    context->loop = NULL;
+    context->gloop = NULL;
+    context->pa_loop = NULL;
     context->api = NULL;
     context->context = NULL;
     context->reconnect_event = NULL;
@@ -91,9 +94,13 @@ context_free(Context* context)
         context->notification = NULL;
     }
 
-    if (context->loop) {
+    if (context->pa_loop) {
         pa_signal_done();
-        pa_mainloop_free(context->loop);
+        pa_glib_mainloop_free(context->pa_loop);
+    }
+
+    if (context->gloop) {
+        g_main_loop_unref(context->gloop);
     }
 }
 
@@ -297,13 +304,15 @@ context_state_callback(pa_context* c, void* userdata)
 }
 
 static void
-exit_signal_callback(pa_mainloop_api* api,
+exit_signal_callback(pa_mainloop_api* api G_GNUC_UNUSED,
                      pa_signal_event* e G_GNUC_UNUSED,
                      int sig G_GNUC_UNUSED,
-                     void* userdata G_GNUC_UNUSED)
+                     void* userdata)
 {
-    if (api) {
-        api->quit(api, 0);
+    Context* context = (Context*)userdata;
+
+    if (context->gloop) {
+        g_main_loop_quit(context->gloop);
     }
 }
 
@@ -332,13 +341,23 @@ pa_connect(Context* c)
 gboolean
 pa_init(Context* c)
 {
-    if (!(c->loop = pa_mainloop_new())) {
-        g_warning("pa_mainloop_new failed");
+    // Integrate PulseAudio into the GLib main loop: this keeps the default
+    // GMainContext iterating, so libnotify's D-Bus proxy tracks notification
+    // daemon restarts (NameOwnerChanged signals) instead of pointing at a
+    // dead daemon forever.
+    if (!(c->pa_loop = pa_glib_mainloop_new(NULL))) {
+        g_warning("pa_glib_mainloop_new failed");
         return FALSE;
     }
-    g_debug("pa_mainloop_new");
+    g_debug("pa_glib_mainloop_new");
 
-    c->api = pa_mainloop_get_api(c->loop);
+    c->api = pa_glib_mainloop_get_api(c->pa_loop);
+    if (!(c->gloop = g_main_loop_new(NULL, FALSE))) {
+        g_warning("g_main_loop_new failed");
+        return FALSE;
+    }
+    g_debug("g_main_loop_new");
+
     if (pa_signal_init(c->api) != 0) {
         g_warning("pa_signal_init failed");
         return FALSE;
@@ -408,7 +427,6 @@ int
 main(int argc, char* argv[])
 {
     Context context;
-    int retval = 1;
 
     setlocale(LC_ALL, "");
 
@@ -432,11 +450,11 @@ main(int argc, char* argv[])
     g_info("PulseAudio has been initialized");
 
     g_info("Run loop");
-    pa_mainloop_run(context.loop, &retval);
+    g_main_loop_run(context.gloop);
     g_info("Stop loop");
 
     notify_uninit();
     context_free(&context);
 
-    return retval;
+    return 0;
 }
